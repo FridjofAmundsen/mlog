@@ -68,8 +68,7 @@ public:
 
     static MLog *instance();
     void enableLogToFile(const QString &appName,
-                         const QString &directory = QStandardPaths::writableLocation(
-                             QStandardPaths::DocumentsLocation));
+                         const QString &directory = "");
     void disableLogToFile();
 
     void setLogRotation(RotationType type, int maxLogs);
@@ -84,6 +83,9 @@ public:
     LogLevel logLevel() const;
 
     void writeRaw(QtMsgType type, const QString &message);
+
+    const QString &logPath() const;
+    void setLogPath(const QString &newLogPath);
 
 private:
     Q_DISABLE_COPY(MLog)
@@ -102,6 +104,7 @@ private:
     bool m_logToConsole = true;
     QFile m_logFile;
     QString m_previousLogPath;
+    QString m_logPath;
     QString m_currentLogPath;
     QMutex m_mutex;
     LogLevel m_logLevel = DebugLog;

@@ -76,11 +76,13 @@ Q_LOGGING_CATEGORY(coreLogger, "core.logger")
  \endcode
  */
 MLog::MLog()
+    : m_logPath( QStandardPaths::writableLocation(
+        QStandardPaths::DocumentsLocation))
 {
     // use backslashes between '%' and '{' to avoid shadowing this placeholders with
     // similar placeholders from wizard.json file during the Qt Creator wizard creation
-    qSetMessagePattern("%\{time}|%\{type}%\{if-category}|%\{category}%\{endif}|%\{function}: "
-                       "%\{message}");
+    qSetMessagePattern("%{time}|%{type}%{if-category}|%{category}%{endif}|%{function}: "
+                       "%{message}");
     qInstallMessageHandler(&messageHandler);
 }
 
@@ -123,10 +125,13 @@ MLog *MLog::instance()
 void MLog::enableLogToFile(const QString &appName, const QString &directory)
 {
     // Check if logs directory exists and if does not exist try to create it
-    QDir logsDir(directory);
+    if (!directory.isEmpty()) {
+        setLogPath(directory);
+    }
+    QDir logsDir(m_logPath);
     if (!logsDir.exists()) {
         qCDebug(coreLogger) << "Creating logs directory";
-        if (logsDir.mkpath(directory)) {
+        if (logsDir.mkpath(m_logPath)) {
             qCDebug(coreLogger) << "Directory was created successfully";
         } else {
             qCCritical(coreLogger) << "Could not create logs directory!";
@@ -135,13 +140,13 @@ void MLog::enableLogToFile(const QString &appName, const QString &directory)
         }
     }
 
-    m_previousLogPath = findPreviousLogPath(directory, appName);
+    m_previousLogPath = findPreviousLogPath(m_logPath, appName);
     if (m_rotationType == MLog::RotationType::Consequent) {
-        m_currentLogPath = directory + '/' + appName + "-current" + m_fileExt;
+        m_currentLogPath = m_logPath + '/' + appName + "-current" + m_fileExt;
     }
     else if (m_rotationType == MLog::RotationType::DateTime) {
         const auto currentDate = QDateTime::currentDateTime().toString(m_dateTimeFormat);
-        m_currentLogPath = directory + '/' + appName + "-" + currentDate + m_fileExt;
+        m_currentLogPath = m_logPath + '/' + appName + "-" + currentDate + m_fileExt;
     }
 
     rotateLogFiles(appName);
@@ -369,11 +374,13 @@ MLog *logger()
  */
 void MLog::rotateLogFiles(const QString &appName)
 {
+     qDebug()<< "removeLogFiles";
     const QString logFilePath(QStandardPaths::writableLocation(
                                   QStandardPaths::DocumentsLocation));
-    const QDir logsDir(logFilePath);
+    const QDir logsDir(m_logPath);
     const QStringList logFilter(appName + "-*" + m_fileExt);
     const auto files = logsDir.entryList(logFilter, QDir::Files, QDir::Reversed);
+    qDebug()<< "rotateLogFiles" << files;
 
     if (m_rotationType == MLog::RotationType::Consequent) {
         const QRegularExpression expr("("+appName+"-previous-)([1-9][0-9]*)"
@@ -395,15 +402,17 @@ void MLog::rotateLogFiles(const QString &appName)
             }
         }
 
-        const QString newPrev = logFilePath + '/' + appName + "-previous-1" + m_fileExt;
+        const QString newPrev = m_logPath + '/' + appName + "-previous-1" + m_fileExt;
         QFile::rename(m_previousLogPath, newPrev);
     }
 
-    if (files.size()+1 > m_maxLogs)
+    if (files.size()+1 > m_maxLogs) {
         removeLastLog(appName, logsDir);
+    }
 
-    if (QFileInfo::exists(m_currentLogPath))
+    if (QFileInfo::exists(m_currentLogPath)) {
         QFile::rename(m_currentLogPath, m_previousLogPath);
+    }
 }
 
 /*!
@@ -435,6 +444,7 @@ QString MLog::findPreviousLogPath(const QString &logFileDir, const QString &appN
  */
 void MLog::removeLastLog(const QString &appName, const QDir &logsDir)
 {
+    qDebug()<< "removeLogFiles";
     const QStringList logFilter(appName + "-*" + m_fileExt);
     const auto files = logsDir.entryList(logFilter, QDir::Files, QDir::Reversed);
     const auto logFilePath = logsDir.absolutePath();
@@ -456,25 +466,39 @@ void MLog::removeLastLog(const QString &appName, const QDir &logsDir)
                 }
             }
         }
-    } else if (m_rotationType == MLog::RotationType::DateTime) {
-        const QRegularExpression expr("(" + appName + "-)"
-                      "(\\d\\d\\d\\d-\\d\\d-\\d\\d_\\d\\d-\\d\\d-\\d\\d)"
-                                + m_fileExt);
-        QDateTime oldest = QDateTime::currentDateTime();
+        QFile::remove(logFilePath + '/' + lastLog);
+    }
+    else if (m_rotationType == MLog::RotationType::DateTime) {
 
-        for(const auto &file : qAsConst(files)) {
-            const auto match = expr.match(file);
-            if (match.hasMatch()) {
-                const auto index = QDateTime::fromString(
-                            match.captured(2), m_dateTimeFormat);
+        // delete old log files;
+        QDir dir(logFilePath);
+        const QStringList logFilter(appName + "-*" + m_fileExt);
+        QFileInfoList files = dir.entryInfoList(logFilter,
+                                QDir::Files | QDir::NoDotAndDotDot,
+                                                QDir::Time | QDir::Reversed);
 
-                if (index < oldest) {
-                    oldest = index;
-                    lastLog = file;
-                }
-            }
+        // sort first
+        std::sort(
+            files.begin(),
+            files.end(),
+            [](const QFileInfo& v1, const QFileInfo& v2) {
+                return v1.lastModified() > v2.lastModified();
+            });
+
+        for (int i = files.size() - 1; i + 2 > m_maxLogs; --i) {
+            const QFileInfo& info = files.at(i);
+            QFile::remove(info.absoluteFilePath());
         }
     }
 
-    QFile::remove(logFilePath + '/' + lastLog);
+}
+
+const QString &MLog::logPath() const
+{
+    return m_logPath;
+}
+
+void MLog::setLogPath(const QString &newLogPath)
+{
+    m_logPath = newLogPath;
 }
